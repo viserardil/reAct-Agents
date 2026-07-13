@@ -1,0 +1,43 @@
+{
+  "version": "run_20260710_093210",
+  "model": "(env HF_MODEL)",
+  "dataset": "sccaglayanworkacc/equity-research-agentic-eval",
+  "timestamp": "2026-07-10 09:32:46",
+  "total": 2,
+  "succeeded": 2,
+  "avg_steps": 2.0,
+  "avg_tokens": 2570.0,
+  "avg_duration_ms": 14982.0,
+  "results": [
+    {
+      "case_id": "1.1",
+      "prompt": "What is the current share price of Apple?",
+      "success": true,
+      "status": "success",
+      "answer": "Apple'ın (AAPL) güncel hisse fiyatı 316.22 USD'dir.",
+      "steps": 2,
+      "tool_calls": 1,
+      "tools_used": [
+        "get_current_stock_price"
+      ],
+      "total_tokens": 1955,
+      "duration_ms": 15599,
+      "error": null
+    },
+    {
+      "case_id": "1.10",
+      "prompt": "Yapay zeka çiplerine yönelik küresel talep trendleri ve pazar beklentileri hakkında güncel bilgiler nelerdir?",
+      "success": true,
+      "status": "success",
+      "answer": "Yapay zeka çiplerine yönelik küresel talep trendleri ve pazar beklentileri hakkında güncel bilgiler şu şekildedir:",
+      "steps": 2,
+      "tool_calls": 1,
+      "tools_used": [
+        "web_search"
+      ],
+      "total_tokens": 3185,
+      "duration_ms": 14365,
+      "error": null
+    }
+  ]
+}

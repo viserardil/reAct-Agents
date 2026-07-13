@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kkb.com/schemas/agentic-eval/run_result.schema.json",
+  "title": "RunResult",
+  "description": "Tek bir framework koşumunun standart trace çıktısı. Olgu tutar, skor tutmaz. Scorer bunu okuyup skor üretir.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "framework",
+    "repetition_index",
+    "case_id",
+    "is_synthetic",
+    "prompt",
+    "model",
+    "model_params",
+    "num_agents",
+    "total_steps",
+    "agents",
+    "final_answer",
+    "status",
+    "tokens",
+    "latency",
+    "timestamps",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "2.0.0",
+      "description": "Şema sürümü; breaking change'de major bump"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Koşumun benzersiz kimliği (UUID v4)"
+    },
+    "framework": {
+      "type": "string",
+      "description": "Framework adı (örn: langgraph, crewai, agno, autogen, maestro)"
+    },
+    "repetition_index": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Aynı case için kaçıncı tekrar (plan stability hesabı için)"
+    },
+    "case_id": {
+      "type": "string",
+      "description": "Hangi görev senaryosu; gruplama ve karşılaştırma anahtarı"
+    },
+    "case_metadata": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Domain-specific görev bilgileri (ticker, category, difficulty vs.). Generic tutuldu, domain'e göre şekillenir."
+    },
+    "is_synthetic": {
+      "type": "boolean",
+      "description": "Sentetik görev mi yoksa gerçek dünya case'i mi"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Agent(lar)a verilen tam task prompt'u (değiştirilmemiş)"
+    },
+    "model": {
+      "type": "string",
+      "description": "Koşumun modeli; tüm framework'lerde sabit olmalı"
+    },
+    "model_params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["temperature", "max_tokens"],
+      "description": "Deneyin kontrol değişkeni — null olamaz. Framework expose etmiyorsa bu bir bulgu.",
+      "properties": {
+        "temperature": { "type": "number" },
+        "top_p":       { "type": ["number", "null"] },
+        "seed":        { "type": ["integer", "null"] },
+        "max_tokens":  { "type": "integer" }
+      }
+    },
+    "num_agents": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bu run'da aktif olan agent sayısı"
+    },
+    "total_steps": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tüm agentların toplam adım sayısı"
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Her agent'ın detaylı trace'i. Step ve tool call bilgisi agent altında hiyerarşik olarak tutulur.",
+      "items": { "$ref": "#/$defs/Agent" }
+    },
+    "final_answer": {
+      "type": ["string", "null"],
+      "description": "Üretilen son çıktı. status=success ise null olmamalı."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "timeout", "error"],
+      "description": "Koşum sonucu"
+    },
+    "error_info": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Hata detayları; status success ise null",
+      "properties": {
+        "error_type":    { "type": "string", "description": "Hata kategorisi (örn: tool_failure, llm_timeout, planning_loop)" },
+        "error_message": { "type": "string", "description": "Ham hata mesajı" },
+        "failed_step_id": { "type": ["string", "null"], "description": "Hatanın oluştuğu step ID'si" }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output", "total"],
+      "description": "Run-level toplam token kullanımı (tüm agent ve LLM call'ların toplamı)",
+      "properties": {
+        "input":  { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 },
+        "total":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_ms"],
+      "description": "Run-level toplam süre ve opsiyonel breakdown",
+      "properties": {
+        "total_ms":      { "type": "number", "minimum": 0, "description": "Wall-clock toplam süre" },
+        "planning_ms":   { "type": ["number", "null"], "minimum": 0, "description": "Toplam planlama süresi (framework raporluyorsa)" },
+        "tool_execution_ms": { "type": ["number", "null"], "minimum": 0, "description": "Toplam tool execution süresi" },
+        "llm_inference_ms":  { "type": ["number", "null"], "minimum": 0, "description": "Toplam LLM inference süresi" }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "ended_at"],
+      "description": "ISO-8601 zaman damgaları; korelasyon ve concurrency analizi için",
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at":   { "type": "string", "format": "date-time" }
+      }
+    },
+    "trace_id": {
+      "type": ["string", "null"],
+      "description": "Observability backend bağlantısı (Langfuse, OpenTelemetry vs.)"
+    },
+    "framework_specific": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Framework'e özgü ek veri; ortak şemaya sığmayan her şey buraya"
+    }
+  },
+  "$defs": {
+    "Agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "role", "steps", "tokens"],
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "Agent'ın benzersiz kimliği (run scope'unda unique)"
+        },
+        "role": {
+          "type": "string",
+          "description": "Agent'ın rolü (örn: planner, researcher, analyst, writer)"
+        },
+        "system_prompt_hash": {
+          "type": ["string", "null"],
+          "description": "Agent system prompt'unun SHA-256 hash'i. Tam prompt framework_specific'te saklanabilir."
+        },
+        "steps": {
+          "type": "array",
+          "description": "Agent'ın attığı adımlar, kronolojik sırada",
+          "items": { "$ref": "#/$defs/Step" }
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output"],
+          "description": "Bu agent'ın toplam token kullanımı",
+          "properties": {
+            "input":  { "type": "integer", "minimum": 0 },
+            "output": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "Step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "step_index", "step_type", "started_at", "ended_at"],
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "description": "Step'in benzersiz kimliği"
+        },
+        "step_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Agent içindeki sıra numarası (0-indexed)"
+        },
+        "step_type": {
+          "type": "string",
+          "enum": ["planning", "tool_call", "synthesis", "reflection", "handoff", "other"],
+          "description": "Adım tipi"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ended_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Step süresi (ms); started_at/ended_at'tan da hesaplanabilir ama convenience field"
+        },
+        "reasoning_content": {
+          "type": ["string", "null"],
+          "description": "Agent'ın düşünme/reasoning çıktısı (CoT, <think> vs.). Skorlanmaz, diagnostic artifact olarak saklanır."
+        },
+        "input_context": {
+          "type": ["string", "null"],
+          "description": "Bu adıma giren context özeti veya referansı (önceki adımın çıktısı, user input vs.)"
+        },
+        "output": {
+          "type": ["string", "null"],
+          "description": "Bu adımın ürettiği çıktı"
+        },
+        "tool_calls": {
+          "type": "array",
+          "description": "Bu step içinde yapılan tool çağrıları (boş array olabilir)",
+          "items": { "$ref": "#/$defs/ToolCall" }
+        },
+        "llm_calls": {
+          "type": "array",
+          "description": "Bu step içinde yapılan LLM API çağrıları",
+          "items": { "$ref": "#/$defs/LLMCall" }
+        }
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_call_id", "tool_name", "tool_input", "tool_output", "success", "latency_ms"],
+      "properties": {
+        "tool_call_id": {
+          "type": "string",
+          "description": "Tool çağrısının benzersiz kimliği"
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Tool Manager'daki kayıtlı tool adı"
+        },
+        "tool_input": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Agent'ın tool'a gönderdiği parametreler (tam JSON)"
+        },
+        "tool_output": {
+          "type": ["string", "object", "null"],
+          "description": "Tool'un döndürdüğü sonuç. Hata durumunda null olabilir."
+        },
+        "success": {
+          "type": "boolean",
+          "description": "Tool çağrısı başarılı mı"
+        },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Hata mesajı; success=true ise null"
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Tool execution süresi (LLM süresinden bağımsız)"
+        },
+        "retry_info": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Retry bilgisi; ilk çağrıysa null",
+          "properties": {
+            "is_retry":             { "type": "boolean" },
+            "retry_of_tool_call_id": { "type": "string" },
+            "retry_attempt":         { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "LLMCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["llm_call_id", "input_tokens", "output_tokens", "duration_ms"],
+      "properties": {
+        "llm_call_id": {
+          "type": "string",
+          "description": "LLM çağrısının benzersiz kimliği"
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bu çağrıda gönderilen token sayısı"
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bu çağrıda üretilen token sayısı"
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "LLM inference süresi"
+        },
+        "request_messages_hash": {
+          "type": ["string", "null"],
+          "description": "Gönderilen message array'inin SHA-256 hash'i. Context packing analizi için; tam mesajlar framework_specific'te tutulabilir."
+        },
+        "request_messages_token_breakdown": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Message array'indeki token dağılımı (framework raporluyorsa)",
+          "properties": {
+            "system_tokens": { "type": ["integer", "null"], "minimum": 0 },
+            "history_tokens": { "type": ["integer", "null"], "minimum": 0 },
+            "tool_desc_tokens": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

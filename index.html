@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ReAct Ajan — Sohbet</title>
+  <!-- React (build gerektirmez; Babel JSX'i tarayıcıda derler) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; --bg:#0f1117; --panel:#171a23; --user:#3b5bdb; --agent:#242938; --muted:#8b93a7; --text:#e7e9ee; --line:#2a2f3d; --accent:#7c6cf0; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+    #root { max-width: 860px; margin: 0 auto; height: 100vh; display:flex; flex-direction:column; }
+    header { padding: 14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+    header h1 { font-size:16px; margin:0; font-weight:600; }
+    header .thread { font-size:12px; color:var(--muted); font-family: ui-monospace, monospace; }
+    header button { margin-left:auto; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; font-size:13px; }
+    header button:hover { border-color:var(--accent); }
+    .chat { flex:1; overflow-y:auto; padding: 18px; display:flex; flex-direction:column; gap:14px; }
+    .msg { max-width: 82%; padding:10px 14px; border-radius:12px; white-space:pre-wrap; word-wrap:break-word; line-height:1.45; }
+    .msg.user { align-self:flex-end; background:var(--user); color:#fff; border-bottom-right-radius:3px; }
+    .msg.agent { align-self:flex-start; background:var(--agent); border:1px solid var(--line); border-bottom-left-radius:3px; }
+    .metrics { font-size:11.5px; color:var(--muted); margin-top:8px; display:flex; flex-wrap:wrap; gap:10px; }
+    .metrics b { color:var(--text); font-weight:600; }
+    .trace-toggle { margin-top:8px; font-size:12px; color:var(--accent); cursor:pointer; user-select:none; }
+    .trace { margin-top:8px; border-top:1px dashed var(--line); padding-top:8px; display:flex; flex-direction:column; gap:8px; }
+    .step { font-size:12.5px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+    .step .lbl { color:var(--accent); font-weight:600; }
+    .step .obs { color:var(--muted); }
+    .empty { color:var(--muted); text-align:center; margin-top:40px; font-size:14px; }
+    form { display:flex; gap:10px; padding:14px 18px; border-top:1px solid var(--line); }
+    textarea { flex:1; resize:none; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; font-size:14px; max-height:140px; }
+    textarea:focus { outline:none; border-color:var(--accent); }
+    form button { background:var(--accent); color:#fff; border:none; border-radius:10px; padding:0 20px; cursor:pointer; font-size:14px; font-weight:600; }
+    form button:disabled { opacity:.5; cursor:not-allowed; }
+    .dots::after { content:'…'; animation: blink 1.2s infinite; }
+    @keyframes blink { 0%,100%{opacity:.3} 50%{opacity:1} }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    function newThreadId() {
+      const rnd = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2));
+      return "web-" + rnd.slice(0, 8);
+    }
+
+    // Tek bir ReAct adımı: Thought / Action / Action Input / Observation
+    function Step({ s }) {
+      return (
+        <div className="step">
+          <div><span className="lbl">Adım {s.adim} — Thought:</span> {s.thought || "—"}</div>
+          {s.action && <div><span className="lbl">Action:</span> {s.action}({s.action_input})</div>}
+          {s.observation && <div className="obs"><span className="lbl">Observation:</span> {s.observation}</div>}
+        </div>
+      );
+    }
+
+    // Ajanın bir cevabı: metin + metrikler + açılabilir trace
+    function AgentMessage({ m }) {
+      const [open, setOpen] = useState(false);
+      return (
+        <div className="msg agent">
+          <div>{m.answer ?? "(cevap üretilemedi)"}</div>
+          <div className="metrics">
+            <span>{m.success ? "✅ başarılı" : "⚠️ cevap yok"}</span>
+            <span>adım <b>{m.steps}</b></span>
+            <span>araç <b>{m.tool_calls}</b>{m.tools_used.length ? ` (${m.tools_used.join(", ")})` : ""}</span>
+            <span>token <b>{m.total_tokens}</b></span>
+            <span>süre <b>{(m.duration_ms/1000).toFixed(1)}sn</b></span>
+          </div>
+          {m.trace && m.trace.length > 0 && (
+            <>
+              <div className="trace-toggle" onClick={() => setOpen(o => !o)}>
+                {open ? "▾ adımları gizle" : `▸ adımları göster (${m.trace.length})`}
+              </div>
+              {open && <div className="trace">{m.trace.map((s, i) => <Step key={i} s={s} />)}</div>}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [threadId, setThreadId] = useState(newThreadId);
+      const chatRef = useRef(null);
+
+      useEffect(() => {
+        if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+      }, [messages, loading]);
+
+      async function send(e) {
+        e.preventDefault();
+        const text = input.trim();
+        if (!text || loading) return;
+        setInput("");
+        setMessages(m => [...m, { role: "user", text }]);
+        setLoading(true);
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text, thread_id: threadId }),
+          });
+          const data = await res.json();
+          setMessages(m => [...m, { role: "agent", ...data }]);
+        } catch (err) {
+          setMessages(m => [...m, { role: "agent", answer: "Hata: " + err.message, success:false, steps:0, tool_calls:0, tools_used:[], total_tokens:0, duration_ms:0, trace:[] }]);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      async function clearChat() {
+        // 1) sunucudaki mevcut thread'in belleğini sil
+        try {
+          await fetch("/api/reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thread_id: threadId }),
+          });
+        } catch (err) { /* sunucu erişilemezse yoksay, yeni thread yine de sıfırlar */ }
+        // 2) yeni thread'e geç (garantili taze bellek) ve ekranı temizle
+        setThreadId(newThreadId());
+        setMessages([]);
+      }
+
+      return (
+        <>
+          <header>
+            <h1>ReAct Ajan</h1>
+            <span className="thread">thread: {threadId}</span>
+            <button onClick={clearChat}>🗑 Temizle</button>
+          </header>
+          <div className="chat" ref={chatRef}>
+            {messages.length === 0 && <div className="empty">Ajanı test etmek için bir soru yaz. Aynı sohbette önceki turları hatırlar.</div>}
+            {messages.map((m, i) =>
+              m.role === "user"
+                ? <div key={i} className="msg user">{m.text}</div>
+                : <AgentMessage key={i} m={m} />
+            )}
+            {loading && <div className="msg agent"><span className="dots">düşünüyor</span></div>}
+          </div>
+          <form onSubmit={send}>
+            <textarea
+              rows="1"
+              placeholder="Sorunu yaz… (Enter: gönder, Shift+Enter: satır)"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e); } }}
+            />
+            <button type="submit" disabled={loading || !input.trim()}>Gönder</button>
+          </form>
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

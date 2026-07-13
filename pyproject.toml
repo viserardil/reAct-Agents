@@ -1,0 +1,26 @@
+[project]
+name = "react-agent-scratch"
+version = "0.1.0"
+description = "Sıfırdan (kütüphanesiz) ReAct agent + FastAPI sohbet UI"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "python-dotenv>=1.0.0",
+    "yfinance>=1.5.1",
+    "datasets>=5.0.0",
+    "jsonschema>=4.26.0",
+    "matplotlib>=3.10.9",
+]
+
+[dependency-groups]
+# Sadece elle test için gereken paketler (uv sync --group dev ile kurulur)
+dev = [
+    "httpx>=0.27.0",
+]
+
+[tool.uv]
+# OneDrive/bulut klasörü hardlink desteklemiyor; kopyalama moduyla kur.
+link-mode = "copy"
