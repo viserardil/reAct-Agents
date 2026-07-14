@@ -10,7 +10,9 @@ import requests
 # DeepInfra, yerel Ollama/vLLM...). Base URL, anahtar ve model env'den okunur;
 # LLM_* ayarlıysa HF_*'ın yerine geçer, hiçbiri yoksa HF Router'a düşer.
 DEFAULT_BASE_URL = "https://router.huggingface.co/v1"
-DEFAULT_MODEL = "Qwen/Qwen3.5-122B-A10B:deepinfra"
+# Sağlayıcı PİN'İ YOK (":deepinfra" gibi): HF Router en hızlı/müsait sağlayıcıyı
+# seçsin. Belirli bir sağlayıcıya pinlemek o an yavaşsa 10 kat gecikme yaratabilir.
+DEFAULT_MODEL = "Qwen/Qwen3.5-122B-A10B"
 
 
 def _first(*names):
@@ -80,6 +82,21 @@ class HuggingFaceLLM:
         self.timeout = timeout if timeout is not None else float(os.environ.get("LLM_TIMEOUT", "90"))
         self.max_retries = max_retries if max_retries is not None else int(os.environ.get("LLM_MAX_RETRIES", "2"))
 
+        # "Thinking" (reasoning) kontrolü. Qwen3 gibi modeller cevaptan önce uzun bir
+        # düşünme üretir; ReAct'te bu gereksiz (kendi akıl yürütmemizi yapıyoruz) ve
+        # bazı sağlayıcılar onu `content`'e döküp cevaba SIZDIRIYOR. Bu yüzden Qwen3'te
+        # varsayılan olarak KAPATIRIZ. Diğer modellere dokunmayız (param göndermeyiz).
+        #   None  → param gönderme (sağlayıcı varsayılanı)
+        #   False → chat_template_kwargs.enable_thinking=false gönder
+        #   True  → enable_thinking=true gönder
+        env_think = os.environ.get("LLM_ENABLE_THINKING")
+        if env_think is not None:
+            self.enable_thinking = env_think.strip().lower() in ("1", "true", "yes", "on")
+        elif "qwen3" in (self.model or "").lower():
+            self.enable_thinking = False
+        else:
+            self.enable_thinking = None
+
     def chat(self, messages, stop=None):
         """
         messages: [{"role": "system"|"user"|"assistant", "content": "..."}]
@@ -102,6 +119,9 @@ class HuggingFaceLLM:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        # Qwen3 vb. için düşünmeyi aç/kapat (reasoning sızıntısını önler).
+        if self.enable_thinking is not None:
+            payload["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
         if stop:
             payload["stop"] = stop
 
@@ -121,7 +141,16 @@ class HuggingFaceLLM:
                 if resp.status_code == 429 or resp.status_code >= 500:
                     last_err = LLMError(f"API {resp.status_code}: {resp.text[:300]}")
                     if attempt < self.max_retries:
-                        time.sleep(1.5 * (attempt + 1))
+                        # 429'da sunucunun Retry-After'ına saygı (yoksa artan bekleme;
+                        # TPM penceresi ~60s olduğu için 429'da daha uzun bekle).
+                        ra = resp.headers.get("retry-after", "")
+                        if ra.replace(".", "", 1).isdigit():
+                            wait = float(ra)
+                        elif resp.status_code == 429:
+                            wait = 8 * (attempt + 1)
+                        else:
+                            wait = 1.5 * (attempt + 1)
+                        time.sleep(min(wait, 65))
                         continue
                 raise LLMError(f"API {resp.status_code}: {resp.text[:500]}")
 

@@ -533,6 +533,13 @@ def visualize_data(spec):
     except Exception:
         return "HATA: 'y' değerleri sayısal olmalı."
     xl = [str(v) for v in x]
+    # x ve y farklı uzunlukta gelirse (model bazen uyumsuz veriyor) ortak öne göre
+    # kırp — matplotlib 'x and y must have same first dimension' hatasını önler.
+    if len(xl) != len(yv):
+        m = min(len(xl), len(yv))
+        if m == 0:
+            return "HATA: x veya y boş."
+        xl, yv = xl[:m], yv[:m]
 
     # Grafik türü: açık 'kind' ya da instruction/title'dan çıkar.
     kind = (data.get("kind") or data.get("type") or "").lower()
