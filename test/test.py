@@ -1,4 +1,14 @@
+"""ReAct ajanı için CANLI eval koşucusu — HuggingFace dataset'inden test case'leri.
 
+Dataset'in `query` sorularını okur, her birini gerçek bir LLM'e (SAĞLAYICI-BAĞIMSIZ —
+LLM_API_KEY / HF_TOKEN / OPENAI_API_KEY… herhangi biri) karşı çalıştırır ve sonucu
+test/a.json v2.0.0 RunResult şemasına uygun JSON olarak kaydeder. Doğru/yanlış
+değerlendirmesi burada YAPILMAZ (olgu toplar; skoru scorer üretir).
+
+Çalıştırma:
+    uv run python test/test.py --limit 5 --validate
+    uv run python test/test.py --version denemem
+"""
 
 from __future__ import annotations
 
