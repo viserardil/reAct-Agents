@@ -42,23 +42,38 @@ class HuggingFaceLLM:
 
     def __init__(self, model=None, api_key=None, base_url=None, temperature=0.0,
                  timeout=None, max_tokens=4096, max_retries=None):
-        # Anahtar: parametre > LLM_API_KEY > HF_TOKEN > yaygın sağlayıcı adları.
-        self.api_key = api_key or _first(
-            "LLM_API_KEY", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN",
-            "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
-            "ANTHROPIC_API_KEY", "GROQ_API_KEY",
-        )
+        # Azure OpenAI standart OpenAI'den ayrı: deployment-tabanlı URL, zorunlu
+        # api-version query param ve 'api-key' header (Bearer değil).
+        self._azure = (os.environ.get("LLM_PROVIDER", "").strip().lower() in ("azure", "azure_openai")
+                       or bool(os.environ.get("AZURE_OPENAI_ENDPOINT")))
+
+        # Anahtar: parametre > (Azure ise AZURE_OPENAI_API_KEY) > LLM_API_KEY > HF_TOKEN > ...
+        if self._azure:
+            self.api_key = api_key or _first("AZURE_OPENAI_API_KEY", "LLM_API_KEY", "OPENAI_API_KEY")
+        else:
+            self.api_key = api_key or _first(
+                "LLM_API_KEY", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN",
+                "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
+                "ANTHROPIC_API_KEY", "GROQ_API_KEY",
+            )
         if not self.api_key:
             raise LLMError(
                 "LLM API anahtarı bulunamadı. .env'e LLM_API_KEY=<anahtar> ekle "
                 "(HuggingFace kullanıyorsan HF_TOKEN da olur)."
             )
-        self.model = model or _first("LLM_MODEL", "HF_MODEL") or DEFAULT_MODEL
 
-        # Base URL (LLM_BASE_URL > HF_BASE_URL > varsayılan). Uçtaki /chat/completions
-        # yoksa ekleriz; sağlayıcılar base'i genelde .../v1 diye verir.
-        base = (base_url or _first("LLM_BASE_URL", "HF_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self.url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+        if self._azure:
+            # model = Azure DEPLOYMENT adı; URL deployment + api-version içerir.
+            self.model = model or _first("AZURE_OPENAI_DEPLOYMENT", "LLM_MODEL", "HF_MODEL") or DEFAULT_MODEL
+            endpoint = (os.environ.get("AZURE_OPENAI_ENDPOINT") or base_url or _first("LLM_BASE_URL") or "").rstrip("/")
+            api_version = _first("OPENAI_API_VERSION", "AZURE_OPENAI_API_VERSION") or "2024-10-21"
+            self.url = f"{endpoint}/openai/deployments/{self.model}/chat/completions?api-version={api_version}"
+        else:
+            self.model = model or _first("LLM_MODEL", "HF_MODEL") or DEFAULT_MODEL
+            # Base URL (LLM_BASE_URL > HF_BASE_URL > varsayılan). Uçtaki /chat/completions
+            # yoksa ekleriz; sağlayıcılar base'i genelde .../v1 diye verir.
+            base = (base_url or _first("LLM_BASE_URL", "HF_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+            self.url = base if base.endswith("/chat/completions") else base + "/chat/completions"
 
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -76,10 +91,11 @@ class HuggingFaceLLM:
         Sağlayıcı bir çağrıyı askıya alırsa timeout (varsayılan 90s) devreye girer;
         ağ hatası / 429 / 5xx durumunda birkaç kez (LLM_MAX_RETRIES) yeniden dener.
         """
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        # Azure → 'api-key' header; diğerleri → 'Authorization: Bearer'.
+        if self._azure:
+            headers = {"api-key": self.api_key, "Content-Type": "application/json"}
+        else:
+            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         payload = {
             "model": self.model,
             "messages": messages,

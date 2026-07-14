@@ -187,6 +187,15 @@ istemci `/chat/completions`'ı ekler.
 `https://generativelanguage.googleapis.com/v1beta/openai/` · Groq
 `https://api.groq.com/openai/v1` · yerel Ollama `http://localhost:11434/v1`.
 
+**Azure OpenAI** (deployment + api-version + `api-key` header ile OpenAI'den ayrı):
+```env
+LLM_PROVIDER=azure_openai
+AZURE_OPENAI_ENDPOINT=https://<kaynak-adin>.openai.azure.com
+AZURE_OPENAI_API_KEY=<key>
+OPENAI_API_VERSION=2024-10-21
+AZURE_OPENAI_DEPLOYMENT=<deployment-adin>   # Azure'da model değil, DEPLOYMENT adı
+```
+
 ---
 
 ## Yeni araç eklemek
