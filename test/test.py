@@ -1,24 +1,4 @@
-"""ReAct ajanı için CANLI eval koşucusu — HuggingFace dataset'inden test case'leri.
 
-Test case'leri "sccaglayanworkacc/equity-research-agentic-eval" dataset'inin
-`query` sorularından okur, her birini gerçek bir HF Inference modeline karşı
-çalıştırır ve sonucu test/a.json'daki v2.0.0 RunResult şemasına uygun JSON olarak
-kaydeder. Beklenti/doğrulama YOK: olgu (trace + metrik) toplar; doğru/yanlış
-değerlendirmesini sen çıktı JSON'undan yaparsın.
-
-Kurulum:
-    uv sync                                  # bağımlılıklar (datasets, jsonschema ...)
-    .env içinde HF_TOKEN (ve isteğe bağlı HF_MODEL)
-
-Çalıştırma (terminalden):
-    uv run python test/test.py --limit 5            # ilk 5 query
-    uv run python test/test.py --index 0 3 7        # sadece 0,3,7. query'ler
-    uv run python test/test.py --list               # query'leri listele, çalıştırma
-    uv run python test/test.py --limit 5 --validate # çıktıyı a.json şemasıyla doğrula
-    uv run python test/test.py --version denemem     # çıktı dosya etiketi
-
-HF_TOKEN yoksa hata verir. Çıktılar test/results/ altına yazılır.
-"""
 
 from __future__ import annotations
 
@@ -268,7 +248,7 @@ class EvalRunner:
         ok = sum(1 for s in self.summaries if s["success"])
         summary_payload = {
             "test_name": self.version,          # koşunun adı (en başta)
-            "model": self.model or "(env HF_MODEL)",
+            "model": self.model or "(env LLM_MODEL)",
             "dataset": DATASET_NAME, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "total": n, "succeeded": ok,
             "avg_steps": round(sum(s["steps"] for s in self.summaries) / n, 2) if n else 0,
@@ -336,8 +316,13 @@ def main() -> int:
     args = p.parse_args()
 
     import os
-    if not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")):
-        print("HATA: HF_TOKEN tanımlı değil (.env'e ekle).", file=sys.stderr)
+    # Sağlayıcı-bağımsız: llm.py'ın kabul ettiği anahtarlardan HERHANGİ biri yeterli.
+    _KEY_ENVS = ("LLM_API_KEY", "HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN", "OPENAI_API_KEY",
+                 "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
+                 "ANTHROPIC_API_KEY", "GROQ_API_KEY")
+    if not any(os.environ.get(k) for k in _KEY_ENVS):
+        print("HATA: Bir LLM API anahtarı yok. .env'e LLM_API_KEY=<anahtar> ekle "
+              "(OpenAI için OPENAI_API_KEY, HF için HF_TOKEN da olur).", file=sys.stderr)
         return 1
 
     print(f"Dataset yükleniyor: {args.dataset} ...")
@@ -363,7 +348,7 @@ def main() -> int:
         is_synthetic=args.synthetic, framework=args.framework,
         progress=not args.no_progress,
     )
-    print(f"\nKoşu '{version}' — {len(cases)} query (model={args.model or 'env HF_MODEL'}, "
+    print(f"\nKoşu '{version}' — {len(cases)} query (model={args.model or 'env LLM_MODEL'}, "
           f"max_steps={args.max_steps})")
 
     try:
