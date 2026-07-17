@@ -99,8 +99,9 @@ Staj_react_scratch/
 
 - **Sağlayıcı-bağımsız LLM** — HF, OpenAI, Gemini, Groq, Ollama… (env ile)
 - **Çok-turlu bellek** — `thread_id` başına önceki soru/cevaplar bağlama enjekte edilir
-- **Reasoning yakalama** — Qwen3 gibi "thinking" modellerinin `reasoning_content`'i ayrı tutulur
-- **Reasoning sızıntısı koruması** — `system/user` rol ayrımı + cevap temizleme kelepçesi
+- **Reasoning yakalama** — modelin `reasoning_content`'i ayrı tutulur, trace'te raporlanır
+- **Reasoning sızıntısı koruması** — Qwen3'te düşünme kapatılır + `system/user` rol ayrımı
+  + cevap temizleme kelepçesi (üç katmanlı savunma)
 - **Markdown-güvenli** — rapor cevapları (başlık/tablo/liste) korunur
 - **Standart eval çıktısı** — her koşum `test/a.json` şemasına (v2.0.0) uyar; harici scorer okuyabilir
 - **Ağ dayanıklılığı** — 429/5xx/timeout'ta otomatik yeniden deneme
@@ -109,11 +110,19 @@ Staj_react_scratch/
 
 ## Kurulum
 
-Bağımlılıklar [uv](https://docs.astral.sh/uv/) ile yönetilir.
+Bağımlılıklar [uv](https://docs.astral.sh/uv/) ile yönetilir (önerilen):
 
 ```powershell
 uv sync                     # sanal ortam + tüm bağımlılıklar
 uv sync --group dev         # + geliştirme/test paketleri (httpx)
+```
+
+uv yoksa `pip` ile de kurulabilir:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 Proje köküne bir `.env` dosyası oluştur:
@@ -184,10 +193,28 @@ istemci `/chat/completions`'ı ekler.
 | `LLM_BASE_URL` | Sağlayıcının OpenAI-uyumlu base URL'i |
 | `LLM_TIMEOUT` | Tek çağrı zaman aşımı (sn, varsayılan 90) |
 | `LLM_MAX_RETRIES` | Yeniden deneme sayısı (varsayılan 2) |
+| `LLM_ENABLE_THINKING` | Modelin "düşünme"si (`1`/`0`). Varsayılan: **Qwen3'te kapalı**, diğerlerinde dokunulmaz — bkz. aşağıdaki not |
 
 Örnek base URL'ler: OpenAI `https://api.openai.com/v1` · Gemini
 `https://generativelanguage.googleapis.com/v1beta/openai/` · Groq
 `https://api.groq.com/openai/v1` · yerel Ollama `http://localhost:11434/v1`.
+
+### "Thinking" modelleri hakkında (önemli)
+
+Qwen3 gibi modeller cevaptan önce uzun bir **düşünme (reasoning)** üretir. ReAct'te
+buna ihtiyacımız yok — akıl yürütmeyi zaten `Thought` adımlarıyla biz yapıyoruz.
+Dahası bu düşünme, sağlayıcıya göre **iki farklı yere** gidebiliyor:
+- ayrı bir `reasoning_content` alanına (temiz), **ya da**
+- doğrudan `content`'in içine → **cevaba sızar** ("Thinking Process: 1. Analyze the Input…")
+
+Aynı model bile sağlayıcıya göre farklı davrandığı için, `llm.py` Qwen3 modellerinde
+düşünmeyi **varsayılan olarak kapatır** (`chat_template_kwargs.enable_thinking=false`).
+Bu hem sızıntıyı kökten bitirir hem üretimi hızlandırır. Açmak istersen:
+`LLM_ENABLE_THINKING=1`.
+
+> **Sağlayıcı pini uyarısı:** Model adına `:deepinfra` gibi bir sağlayıcı eki
+> **ekleme** — Router en hızlı sağlayıcıyı seçemez. Ölçtüğümüz fark: pinsiz **4 sn**,
+> `:deepinfra` pinli **43 sn** (aynı soru). Belirli bir sağlayıcı şart değilse pinsiz bırak.
 
 **Azure OpenAI** (deployment + api-version + `api-key` header ile OpenAI'den ayrı):
 ```env

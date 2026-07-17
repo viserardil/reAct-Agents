@@ -1,5 +1,24 @@
-requests>=2.31.0
+# pip kullananlar için (uv kullanıyorsan: `uv sync` — pyproject.toml yeterli).
+#   python -m venv .venv && .venv\Scripts\activate
+#   pip install -r requirements.txt
+# Bu dosya pyproject.toml'daki bağımlılıklarla aynı tutulmalıdır.
+
+# --- Çekirdek: agent + LLM istemcisi ---
+requests>=2.31.0            # ham HTTP /chat/completions çağrıları
+python-dotenv>=1.0.0        # .env okuma (API anahtarları)
+
+# --- Web sohbet UI (chat_api.py) ---
 fastapi>=0.110.0
-uvicorn>=0.29.0
+uvicorn[standard]>=0.29.0
 pydantic>=2.6.0
-python-dotenv>=1.0.0
+
+# --- Araçlar (tools.py) ---
+yfinance>=1.5.1             # finans araçları (fiyat, bilanço, teknik göstergeler)
+matplotlib>=3.10.9          # plot_chart / visualize_data (PNG grafikler)
+
+# --- Eval koşucusu (test/test.py) ---
+datasets>=5.0.0             # HuggingFace dataset'inden test case'leri
+jsonschema>=4.26.0          # çıktıyı test/a.json şemasına karşı doğrulama
+
+# --- Geliştirme / elle test (opsiyonel) ---
+httpx>=0.27.0               # API'ye istek atmak için
