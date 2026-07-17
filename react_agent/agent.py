@@ -75,15 +75,23 @@ class RunResult:
 
 
 class ReActAgent:
-    def __init__(self, llm=None, max_steps=12, verbose=True):
+    def __init__(self, llm=None, max_steps=12, verbose=True, logger=None):
         self.llm = llm or HuggingFaceLLM()
         self.max_steps = max_steps      # sonsuz döngüye karşı güvenlik sınırı
         self.verbose = verbose
+        # logger verilirse adımlar oraya (zaman damgalı) akar; yoksa düz print.
+        # Sunucuda (chat_api) logger kullanılır, CLI'da print yeterli.
+        self.logger = logger
         # thread_id -> [(soru, cevap), ...]  : çok-turlu bellek
         self._memory = {}
 
     def _log(self, text):
-        if self.verbose:
+        if not self.verbose:
+            return
+        if self.logger is not None:
+            # Logger zaten zaman damgası/satır ekliyor; baştaki boş satırı at.
+            self.logger.info(str(text).strip())
+        else:
             print(text)
 
     def reset_memory(self, thread_id):

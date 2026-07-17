@@ -14,7 +14,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import sys
 import time
+import traceback
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -35,6 +39,28 @@ except ImportError:
 ROOT_DIR = Path(__file__).resolve().parent
 INDEX_HTML = ROOT_DIR / "index.html"
 LOG_DIR = ROOT_DIR / "scratch" / "chat_logs"
+
+
+# --- Terminal loglama -------------------------------------------------------
+# CHAT_LOG_LEVEL=DEBUG  -> ajanın her adımını (Thought/Action/Observation) bas
+# CHAT_LOG_LEVEL=INFO   -> (varsayılan) adımlar + tur özeti
+# CHAT_LOG_LEVEL=WARNING-> sadece hatalar
+LOG_LEVEL = os.environ.get("CHAT_LOG_LEVEL", "INFO").upper()
+
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s %(levelname)-5s %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+    force=True,          # uvicorn kendi handler'ını kurduysa ezip bizimkini koy
+)
+LOG = logging.getLogger("chat")
+
+
+def _short(text: Any, limit: int = 300) -> str:
+    """Uzun metni tek satıra indirip kırp (terminal okunur kalsın)."""
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
 # --- İstek/yanıt modelleri --------------------------------------------------
@@ -101,9 +127,13 @@ def get_agent():
     global _agent
     if _agent is None:
         from react_agent import ReActAgent
+        from react_agent.tools import TOOLS
 
-        # verbose=False: sunucu konsolunu şişirmesin. Model .env'den (HF_MODEL).
-        _agent = ReActAgent(verbose=False)
+        # verbose=True + logger: ajanın her adımı (Thought/Action/Observation)
+        # zaman damgalı olarak terminale akar. Susturmak: CHAT_LOG_LEVEL=WARNING
+        _agent = ReActAgent(verbose=True, logger=LOG)
+        LOG.info("Ajan hazır — model=%s | thinking=%s | %d araç",
+                 _agent.llm.model, _agent.llm.enable_thinking, len(TOOLS))
     return _agent
 
 
@@ -148,7 +178,27 @@ def chat(req: ChatRequest) -> ChatResponse:
     # def (async değil): agent.run senkron; FastAPI bunu threadpool'da çalıştırır,
     # böylece uzun bir LLM çağrısı event loop'u bloklamaz.
     agent = get_agent()
-    result = agent.run(req.message, thread_id=req.thread_id)  # aynı thread => bellek
+
+    LOG.info("─" * 70)
+    LOG.info("[%s] SORU: %s", req.thread_id, _short(req.message, 200))
+    t0 = time.time()
+    try:
+        result = agent.run(req.message, thread_id=req.thread_id)  # aynı thread => bellek
+    except Exception as exc:
+        # Hatayı yut yerine logla + 500 dön; terminalde tam traceback görünsün.
+        LOG.error("[%s] ✗ HATA (%.1fsn): %s: %s",
+                  req.thread_id, time.time() - t0, type(exc).__name__, exc)
+        LOG.error(traceback.format_exc())
+        raise
+
+    # Tur özeti: durum, adım, araçlar, token, süre.
+    LOG.info("[%s] %s | adım=%d araç=%d (%s) token=%d (giriş=%d/çıkış=%d) süre=%.1fsn",
+             req.thread_id,
+             "✓ " + result.status if result.success else "⚠ " + result.status,
+             result.steps, result.tool_calls, ", ".join(result.tools_used) or "-",
+             result.total_tokens, result.input_tokens, result.output_tokens,
+             result.elapsed_seconds)
+    LOG.info("[%s] CEVAP: %s", req.thread_id, _short(result.answer, 300))
 
     payload = {
         "answer": result.answer,
@@ -175,6 +225,7 @@ def chat(req: ChatRequest) -> ChatResponse:
 def reset(req: ResetRequest) -> dict[str, Any]:
     """Bir thread'in sunucudaki belleğini siler (Temizle butonu bunu çağırır)."""
     cleared = get_agent().reset_memory(req.thread_id)
+    LOG.info("[%s] bellek temizlendi (silinecek kayıt vardı: %s)", req.thread_id, cleared)
     return {"ok": True, "cleared": cleared, "thread_id": req.thread_id}
 
 
@@ -186,7 +237,9 @@ def health() -> dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
-    print("ReAct sohbet sunucusu: http://127.0.0.1:8000")
+    LOG.info("ReAct sohbet sunucusu: http://127.0.0.1:8001")
+    LOG.info("Tur kayıtları (JSONL): %s", get_logger().path)
+    LOG.info("Log seviyesi: %s  (ayrıntı için CHAT_LOG_LEVEL=DEBUG, sessizlik için WARNING)", LOG_LEVEL)
     # reload=True: kod (araçlar dahil) değişince sunucu kendini yeniler.
     # Bunun çalışması için app'i import string olarak veriyoruz.
     uvicorn.run("chat_api:app", host="127.0.0.1", port=8001, reload=True)
