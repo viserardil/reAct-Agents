@@ -121,7 +121,9 @@ Proje köküne bir `.env` dosyası oluştur:
 ```dotenv
 # LLM (HuggingFace örneği) — LLM_* verirsen HF_*'ın yerine geçer
 HF_TOKEN=hf_xxxxxxxx
-HF_MODEL=Qwen/Qwen3.5-122B-A10B:deepinfra
+# Sağlayıcı pini (":deepinfra") EKLEME — Router en hızlıyı seçsin (aksi halde
+# o sağlayıcı yavaşsa çağrılar 10 kata kadar uzayabilir).
+HF_MODEL=Qwen/Qwen3.5-122B-A10B
 
 # Web araması için (opsiyonel)
 TAVILY_API_KEY=tvly-xxxxxxxx

@@ -189,4 +189,4 @@ if __name__ == "__main__":
     print("ReAct sohbet sunucusu: http://127.0.0.1:8000")
     # reload=True: kod (araçlar dahil) değişince sunucu kendini yeniler.
     # Bunun çalışması için app'i import string olarak veriyoruz.
-    uvicorn.run("chat_api:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("chat_api:app", host="127.0.0.1", port=8001, reload=True)
