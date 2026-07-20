@@ -160,6 +160,14 @@ Tarayıcıda soru yaz → cevap + metrikler (adım, araç, token, süre) + açı
 **trace** (her adımın thought/action/observation'ı). Aynı sohbet önceki turları
 hatırlar; 🗑 Temizle belleği sıfırlar. Kod değişince sunucu otomatik yenilenir (reload).
 
+**Oturum log'ları:** Her sohbet (thread) **kendi dosyasına** yazar:
+`logs/<thread_id>.log` (dizin `LOG_DIR` ile değişir). Terminalde yalnızca kısa özet
+kalır; adım adım TAM ReAct akışı (her adımın Thought / Action / Observation'ı) dosyaya
+iner — paralel sohbetler karışmaz, koşu bittikten sonra da incelenebilir. Dosya canlı
+güncellenir (`tail -f`). Bu düzen Plan-Execute tarafındaki `logs/<thread_id>.log` ile
+**aynıdır**, yani iki mimarinin akışı yan yana okunabilir. (`chat_<zaman>.jsonl` makine-
+okur tam kayıt olarak `scratch/chat_logs/` altında ayrıca tutulmaya devam eder.)
+
 ### 3) Eval koşucusu (dataset)
 
 `sccaglayanworkacc/equity-research-agentic-eval` dataset'inin `query` sorularını çalıştırır:

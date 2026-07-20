@@ -16,10 +16,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
+import threading
 import time
 import traceback
 from collections import defaultdict
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +42,9 @@ except ImportError:
 ROOT_DIR = Path(__file__).resolve().parent
 INDEX_HTML = ROOT_DIR / "index.html"
 LOG_DIR = ROOT_DIR / "scratch" / "chat_logs"
+# Oturum (thread) başına insan-okur log dosyası. Plan-Execute tarafındaki
+# logs/<thread_id>.log ile AYNI düzen — iki mimarinin akışı yan yana okunabilsin.
+SESSION_LOG_DIR = Path(os.getenv("LOG_DIR") or (ROOT_DIR / "logs"))
 
 
 # --- Terminal loglama -------------------------------------------------------
@@ -61,6 +67,71 @@ def _short(text: Any, limit: int = 300) -> str:
     """Uzun metni tek satıra indirip kırp (terminal okunur kalsın)."""
     s = " ".join(str(text or "").split())
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+# --- Oturum (thread) log dosyaları ------------------------------------------
+# Plan-Execute tarafıyla simetrik: her sohbet kendi logs/<thread_id>.log dosyasına
+# yazar. Terminalde yalnızca kısa özet kalır; adım adım TAM akış (her ReAct adımı:
+# Thought / Action / Observation) dosyaya iner. Paralel sohbetler karışmaz, koşu
+# bittikten sonra da incelenebilir.
+#
+# ReAct ajanı TEKİL ve istekleri FastAPI threadpool'da koşuyor; ajanın tek bir
+# `logger` alanı var. İstek başına farklı dosyaya yazmak için logger'ı ContextVar
+# ile enjekte ediyoruz: _RequestLogger, aktif isteğin oturum dosyasına yönlendirir.
+_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_-]")
+_session_loggers: dict[str, logging.Logger] = {}
+_session_lock = threading.Lock()
+# O an işlenen isteğin oturum logger'ı (yoksa None → sadece terminal).
+_active_session: ContextVar[logging.Logger | None] = ContextVar("_active_session", default=None)
+
+
+def _session_logger(thread_id: str) -> logging.Logger:
+    """thread_id'ye özgü dosya logger'ı — ilk çağrıda kurulur, sonra önbellekten.
+
+    thread_id istek gövdesinden gelir (dışarıdan kontrol edilir); dosya adına
+    girmeden önce ayraç/nokta içermeyen bir alt kümeye indirilir — aksi halde
+    '../x' gibi bir değer log dizininin dışına yazabilirdi.
+    """
+    safe = _UNSAFE_NAME.sub("_", str(thread_id or ""))[:64] or "anon"
+    with _session_lock:
+        logger = _session_loggers.get(safe)
+        if logger is not None:
+            return logger
+        SESSION_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        logger = logging.getLogger(f"react.session.{safe}")
+        logger.setLevel(logging.INFO)
+        logger.propagate = False  # oturum ayrıntısı terminale TEKRAR basılmasın
+        handler = logging.FileHandler(SESSION_LOG_DIR / f"{safe}.log", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
+        logger.addHandler(handler)
+        logger.info("=" * 72)
+        logger.info("OTURUM %s · başladı %s", safe, time.strftime("%Y-%m-%d %H:%M:%S"))
+        agent = get_agent()
+        logger.info("mimari=ReAct · model=%s · thinking=%s",
+                    agent.llm.model, agent.llm.enable_thinking)
+        logger.info("(bu dosya canlı güncellenir — `tail -f` ile izleyebilirsin)")
+        logger.info("=" * 72)
+        _session_loggers[safe] = logger
+        return logger
+
+
+class _RequestLogger:
+    """ReActAgent'a verilen 'logger'. Ajanın _log çağrılarını hem terminale
+    (kısa özet için değil — tam akış terminalde de kalsın istenirse) hem de
+    o anki isteğin oturum dosyasına yönlendirir.
+
+    Ajan yalnızca .info(str) çağırıyor; bu sınıf o tek metodu karşılar."""
+
+    def info(self, msg, *args, **kwargs) -> None:
+        text = msg % args if args else msg
+        session = _active_session.get()
+        target = session if session is not None else LOG
+        # Ajan modelin ham çıktısını (Thought/Action/Action Input) tek blok olarak
+        # basıyor. Çok satırlıysa satır satır yaz ki her satır kendi zaman damgasını
+        # alsın ve hizalama bozulmasın; devam satırlarını hafifçe girintile.
+        lines = str(text).splitlines() or [""]
+        for i, line in enumerate(lines):
+            target.info("%s", line if i == 0 else f"    {line}")
 
 
 # --- İstek/yanıt modelleri --------------------------------------------------
@@ -129,9 +200,10 @@ def get_agent():
         from react_agent import ReActAgent
         from react_agent.tools import TOOLS
 
-        # verbose=True + logger: ajanın her adımı (Thought/Action/Observation)
-        # zaman damgalı olarak terminale akar. Susturmak: CHAT_LOG_LEVEL=WARNING
-        _agent = ReActAgent(verbose=True, logger=LOG)
+        # verbose=True + _RequestLogger: ajanın her adımı (Thought/Action/
+        # Observation) o anki isteğin oturum dosyasına akar (bkz. _session_logger).
+        # İstek bağlamı dışındaysa terminale düşer. Susturmak: CHAT_LOG_LEVEL=WARNING
+        _agent = ReActAgent(verbose=True, logger=_RequestLogger())
         LOG.info("Ajan hazır — model=%s | thinking=%s | %d araç",
                  _agent.llm.model, _agent.llm.enable_thinking, len(TOOLS))
     return _agent
@@ -178,27 +250,40 @@ def chat(req: ChatRequest) -> ChatResponse:
     # def (async değil): agent.run senkron; FastAPI bunu threadpool'da çalıştırır,
     # böylece uzun bir LLM çağrısı event loop'u bloklamaz.
     agent = get_agent()
+    slog = _session_logger(req.thread_id)
 
-    LOG.info("─" * 70)
-    LOG.info("[%s] SORU: %s", req.thread_id, _short(req.message, 200))
+    # Terminalde yalnızca kısa 'başladı' satırı; tam akış oturum dosyasına.
+    LOG.info("▶ [%s] SORU: %s", req.thread_id, _short(req.message, 140))
+    slog.info("")
+    slog.info("─" * 72)
+    slog.info("▶ SORU: %s", _short(req.message, 500))
+    slog.info("─" * 72)
+
     t0 = time.time()
+    token = _active_session.set(slog)  # ajanın _log çağrılarını bu dosyaya yönlendir
     try:
         result = agent.run(req.message, thread_id=req.thread_id)  # aynı thread => bellek
     except Exception as exc:
-        # Hatayı yut yerine logla + 500 dön; terminalde tam traceback görünsün.
+        # Hatayı yut yerine logla + 500 dön; TAM traceback hem terminale hem dosyaya.
         LOG.error("[%s] ✗ HATA (%.1fsn): %s: %s",
                   req.thread_id, time.time() - t0, type(exc).__name__, exc)
-        LOG.error(traceback.format_exc())
+        slog.error("✗ HATA (%.1fsn): %s: %s",
+                   time.time() - t0, type(exc).__name__, exc)
+        slog.error(traceback.format_exc())
         raise
+    finally:
+        _active_session.reset(token)
 
-    # Tur özeti: durum, adım, araçlar, token, süre.
-    LOG.info("[%s] %s | adım=%d araç=%d (%s) token=%d (giriş=%d/çıkış=%d) süre=%.1fsn",
-             req.thread_id,
-             "✓ " + result.status if result.success else "⚠ " + result.status,
-             result.steps, result.tool_calls, ", ".join(result.tools_used) or "-",
-             result.total_tokens, result.input_tokens, result.output_tokens,
-             result.elapsed_seconds)
-    LOG.info("[%s] CEVAP: %s", req.thread_id, _short(result.answer, 300))
+    # Tur özeti: durum, adım, araçlar, token, süre. Terminale tek satır, dosyaya
+    # cevabıyla birlikte.
+    ozet = ("%s | adım=%d araç=%d (%s) token=%d (giriş=%d/çıkış=%d) süre=%.1fsn" % (
+        "✓ " + result.status if result.success else "⚠ " + result.status,
+        result.steps, result.tool_calls, ", ".join(result.tools_used) or "-",
+        result.total_tokens, result.input_tokens, result.output_tokens,
+        result.elapsed_seconds))
+    LOG.info("[%s] %s", req.thread_id, ozet)
+    slog.info("%s", ozet)
+    slog.info("CEVAP: %s", _short(result.answer, 2000))
 
     payload = {
         "answer": result.answer,
@@ -226,6 +311,8 @@ def reset(req: ResetRequest) -> dict[str, Any]:
     """Bir thread'in sunucudaki belleğini siler (Temizle butonu bunu çağırır)."""
     cleared = get_agent().reset_memory(req.thread_id)
     LOG.info("[%s] bellek temizlendi (silinecek kayıt vardı: %s)", req.thread_id, cleared)
+    _session_logger(req.thread_id).info(
+        "🗑 BELLEK SIFIRLANDI (silinecek geçmiş var mıydı: %s)", cleared)
     return {"ok": True, "cleared": cleared, "thread_id": req.thread_id}
 
 
@@ -239,6 +326,7 @@ if __name__ == "__main__":
 
     LOG.info("ReAct sohbet sunucusu: http://127.0.0.1:8001")
     LOG.info("Tur kayıtları (JSONL): %s", get_logger().path)
+    LOG.info("Oturum log'ları: %s  (her sohbet kendi <thread_id>.log dosyasına yazar)", SESSION_LOG_DIR)
     LOG.info("Log seviyesi: %s  (ayrıntı için CHAT_LOG_LEVEL=DEBUG, sessizlik için WARNING)", LOG_LEVEL)
     # reload=True: kod (araçlar dahil) değişince sunucu kendini yeniler.
     # Bunun çalışması için app'i import string olarak veriyoruz.
