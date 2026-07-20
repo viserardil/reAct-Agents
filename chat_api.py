@@ -264,13 +264,25 @@ def chat(req: ChatRequest) -> ChatResponse:
     try:
         result = agent.run(req.message, thread_id=req.thread_id)  # aynı thread => bellek
     except Exception as exc:
-        # Hatayı yut yerine logla + 500 dön; TAM traceback hem terminale hem dosyaya.
-        LOG.error("[%s] ✗ HATA (%.1fsn): %s: %s",
-                  req.thread_id, time.time() - t0, type(exc).__name__, exc)
-        slog.error("✗ HATA (%.1fsn): %s: %s",
-                   time.time() - t0, type(exc).__name__, exc)
+        # Hatayı logla (tam traceback dosyaya) ama 500 yerine GEÇERLİ bir JSON
+        # cevabı dön — aksi halde UI düz metin 500'ü parse edemeyip çöküyor.
+        dt = time.time() - t0
+        LOG.error("[%s] ✗ HATA (%.1fsn): %s: %s", req.thread_id, dt, type(exc).__name__, exc)
+        slog.error("✗ HATA (%.1fsn): %s: %s", dt, type(exc).__name__, exc)
         slog.error(traceback.format_exc())
-        raise
+        # Kullanıcıya anlaşılır mesaj (özellikle "model meşgul" / 429 durumunda).
+        msg = str(exc)
+        if "429" in msg or "engine_overloaded" in msg or "busy" in msg.lower():
+            friendly = "Model şu an meşgul (sağlayıcı aşırı yüklü). Lütfen birkaç saniye sonra tekrar dene."
+        elif "timeout" in msg.lower() or "timed out" in msg.lower():
+            friendly = "Model zaman aşımına uğradı. Tekrar dener misin?"
+        else:
+            friendly = f"Bir hata oluştu: {msg[:200]}"
+        return ChatResponse(
+            answer=friendly, success=False, steps=0, tool_calls=0, tools_used=[],
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            duration_ms=int(dt * 1000), trace=[],
+        )
     finally:
         _active_session.reset(token)
 
